@@ -67,7 +67,7 @@ static float accel_counter = 1.0f;  // Single acceleration counter for all movem
 static float x_accel_counter = 1.0f;  // Start at 1.0 for base speed
 static float y_accel_counter = 1.0f;  // Start at 1.0 for base speed
 const float MAX_ACCEL_COUNTER = 80.0f;   // Maximum acceleration level
-const float ACCEL_INCREMENT = 0.15f;    // How much to increase per movement
+const float ACCEL_INCREMENT = 0.1f;    // How much to increase per movement
 const float ACCEL_DECAY_RATE = 0.95f;   // Decay factor when no movement
 
 void hid_task(void);
