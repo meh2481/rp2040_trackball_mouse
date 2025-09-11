@@ -38,7 +38,7 @@
 #define RIGHT_BTN  7
 #define MIDDLE_BTN 8
 
-#define X1 10  // Back to original pins
+#define X1 10
 #define X2 11
 #define Y1 12
 #define Y2 13
@@ -49,6 +49,9 @@
 
 int8_t delta_x = 0;
 int8_t delta_y = 0;
+
+// Button state variables
+static uint8_t button_state = 0;  // Bitmask for button states (bit 0: left, bit 1: right, bit 2: middle)
 
 // Previous states for quadrature encoder
 static uint8_t prev_x_state = 0;
@@ -84,6 +87,19 @@ int main(void)
   gpio_init(25);
   gpio_set_dir(25, GPIO_OUT);
   gpio_put(25, true);  // Turn on LED to show device is running
+
+  // Initialize button pins
+  gpio_init(LEFT_BTN);
+  gpio_set_dir(LEFT_BTN, GPIO_IN);
+  gpio_pull_up(LEFT_BTN);
+
+  gpio_init(RIGHT_BTN);
+  gpio_set_dir(RIGHT_BTN, GPIO_IN);
+  gpio_pull_up(RIGHT_BTN);
+
+  gpio_init(MIDDLE_BTN);
+  gpio_set_dir(MIDDLE_BTN, GPIO_IN);
+  gpio_pull_up(MIDDLE_BTN);
 
   // Initialize quadrature encoder pins with interrupts
   gpio_init(X1);
@@ -160,6 +176,12 @@ void hid_task(void)
   {
     start_ms += interval_ms;
 
+    // Read button states (active low due to pull-ups)
+    uint8_t buttons = 0;
+    if (!gpio_get(LEFT_BTN)) buttons |= (1 << 0);   // Left button
+    if (!gpio_get(RIGHT_BTN)) buttons |= (1 << 1);  // Right button
+    if (!gpio_get(MIDDLE_BTN)) buttons |= (1 << 2); // Middle button
+
     // Apply acceleration to scroll deltas (use smaller values for scroll)
     int8_t scroll_x = 0;
     int8_t scroll_y = 0;
@@ -191,7 +213,7 @@ void hid_task(void)
     {
       uint8_t const report_id = 0;
       // Use scroll_x for vertical scroll (wheel), scroll_y for horizontal scroll (pan)
-      tud_hid_n_mouse_report(ITF_NUM_MOUSE, report_id, 0, 0, 0, -scroll_y, scroll_x);
+      tud_hid_n_mouse_report(ITF_NUM_MOUSE, report_id, buttons, 0, 0, -scroll_y, scroll_x);
 
       // Reset deltas after sending
       delta_x = 0;
