@@ -27,7 +27,6 @@
 
 enum
 {
-  ITF_NUM_KEYBOARD,
   ITF_NUM_MOUSE,
   ITF_NUM_TOTAL
 };

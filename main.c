@@ -33,21 +33,46 @@
 #include "usb_descriptors.h"
 
 #include "pico/stdlib.h"
-#include "adns5050.h"
+
+#define LEFT_BTN   6
+#define RIGHT_BTN  7
+#define MIDDLE_BTN 8
+
+#define X1 10  // Back to original pins
+#define X2 11
+#define Y1 12
+#define Y2 13
 
 //--------------------------------------------------------------------+
 // MACRO CONSTANT TYPEDEF PROTYPES
 //--------------------------------------------------------------------+
 
-adns5050_t adns5050;
-int8_t delta_x;
-int8_t delta_y;
-uint16_t encoder;
-int8_t vertical;
-int8_t horizontal;
-uint8_t button_mask;
+int8_t delta_x = 0;
+int8_t delta_y = 0;
+
+// Previous states for quadrature encoder
+static uint8_t prev_x_state = 0;
+static uint8_t prev_y_state = 0;
+
+// Debouncing timestamps
+static uint32_t last_x_interrupt = 0;
+static uint32_t last_y_interrupt = 0;
+const uint32_t DEBOUNCE_US = 5; // 5us debounce time
+
+// Acceleration variables
+static int8_t last_x_direction = 0;  // -1, 0, or 1
+static int8_t last_y_direction = 0;  // -1, 0, or 1
+static int8_t last_diagonal_direction = 0;  // 0=none, 1=up-right, 2=up-left, 3=down-right, 4=down-left
+static float accel_counter = 1.0f;  // Single acceleration counter for all movement
+static float x_accel_counter = 1.0f;  // Start at 1.0 for base speed
+static float y_accel_counter = 1.0f;  // Start at 1.0 for base speed
+const float MAX_ACCEL_COUNTER = 80.0f;   // Maximum acceleration level
+const float ACCEL_INCREMENT = 0.15f;    // How much to increase per movement
+const float ACCEL_DECAY_RATE = 0.95f;   // Decay factor when no movement
 
 void hid_task(void);
+
+// Interrupt callback for quadrature encoder
 void irq_callback(uint gpio, uint32_t events);
 
 /*------------- MAIN -------------*/
@@ -55,40 +80,41 @@ int main(void)
 {
   board_init();
 
-  // Right button
-  gpio_init(20);
-  gpio_set_dir(20, GPIO_IN);
-  gpio_set_pulls(20, true, false);
-  // Left button
-  gpio_init(11);
-  gpio_set_dir(11, GPIO_IN);
-  gpio_set_pulls(11, true, false);
+  // Initialize LED for status
+  gpio_init(25);
+  gpio_set_dir(25, GPIO_OUT);
+  gpio_put(25, true);  // Turn on LED to show device is running
 
-  // A phase
-  gpio_init(18);
-  gpio_set_dir(18, GPIO_IN);
-  gpio_pull_down(18);
-  // B phase
-  gpio_init(10);
-  gpio_set_dir(10, GPIO_IN);
-  gpio_pull_down(10);
-  gpio_set_irq_enabled_with_callback(10, GPIO_IRQ_EDGE_RISE | GPIO_IRQ_EDGE_FALL, true, irq_callback);
+  // Initialize quadrature encoder pins with interrupts
+  gpio_init(X1);
+  gpio_set_dir(X1, GPIO_IN);
+  gpio_pull_down(X1);
+  gpio_set_irq_enabled(X1, GPIO_IRQ_EDGE_RISE | GPIO_IRQ_EDGE_FALL, true);
 
-  adns5050_init(&adns5050, 16, 14, 9);
-  gpio_init(12);
-  gpio_set_dir(12, GPIO_OUT);
-  gpio_put(12, true);
+  gpio_init(X2);
+  gpio_set_dir(X2, GPIO_IN);
+  gpio_pull_down(X2);
+  gpio_set_irq_enabled(X2, GPIO_IRQ_EDGE_RISE | GPIO_IRQ_EDGE_FALL, true);
 
-  adns5050_begin(&adns5050);
-  sleep_ms(1);
-  adns5050_sync(&adns5050);
+  gpio_init(Y1);
+  gpio_set_dir(Y1, GPIO_IN);
+  gpio_pull_down(Y1);
+  gpio_set_irq_enabled(Y1, GPIO_IRQ_EDGE_RISE | GPIO_IRQ_EDGE_FALL, true);
+
+  gpio_init(Y2);
+  gpio_set_dir(Y2, GPIO_IN);
+  gpio_pull_down(Y2);
+  gpio_set_irq_enabled(Y2, GPIO_IRQ_EDGE_RISE | GPIO_IRQ_EDGE_FALL, true);
+
+  // Set up interrupt handler
+  gpio_set_irq_callback(irq_callback);
+  irq_set_enabled(IO_IRQ_BANK0, true);
 
   tusb_init();
 
   while (1)
   {
     tud_task(); // tinyusb device task
-
     hid_task();
   }
 }
@@ -124,74 +150,51 @@ void tud_resume_cb(void)
 // USB HID
 //--------------------------------------------------------------------+
 
-// Every 10ms, we will sent 1 report for each HID profile (keyboard, mouse etc ..)
-// tud_hid_report_complete_cb() is used to send the next report after previous one is complete
 void hid_task(void)
 {
-  // Poll every 10ms
+  // Send reports every 10ms to avoid flooding USB
   const uint32_t interval_ms = 10;
   static uint32_t start_ms = 0;
 
-  delta_y += adns5050_read(&adns5050, ADNS5050_DELTA_X_REG);
-  delta_x -= adns5050_read(&adns5050, ADNS5050_DELTA_Y_REG);
-
-  if (gpio_get(20) == 0)
-    button_mask |= MOUSE_BUTTON_RIGHT;
-  else
-    button_mask &= ~MOUSE_BUTTON_RIGHT;
-  if (gpio_get(11) == 0)
-    button_mask |= MOUSE_BUTTON_LEFT;
-  else
-    button_mask &= ~MOUSE_BUTTON_LEFT;
-
-  if (board_millis() - start_ms < interval_ms)
-    return; // not enough time
-  start_ms += interval_ms;
-
-  uint32_t const btn = board_button_read();
-
-  // Remote wakeup
-  if (tud_suspended() && btn)
+  if (board_millis() - start_ms >= interval_ms)
   {
-    // Wake up host if we are in suspend mode
-    // and REMOTE_WAKEUP feature is enabled by host
-    tud_remote_wakeup();
-  }
-  else
-  {
-    // keyboard interface
-    if (tud_hid_n_ready(ITF_NUM_KEYBOARD))
-    {
-      // used to avoid send multiple consecutive zero report for keyboard
-      static bool has_keyboard_key = false;
+    start_ms += interval_ms;
 
-      uint8_t const report_id = 0;
-      uint8_t const modifier = 0;
+    // Apply acceleration to movement deltas
+    int16_t accel_x = delta_x;
+    int16_t accel_y = delta_y;
 
-      if (btn)
-      {
-        uint8_t keycode[6] = {0};
-        keycode[0] = HID_KEY_ARROW_RIGHT;
-
-        tud_hid_n_keyboard_report(ITF_NUM_KEYBOARD, report_id, modifier, keycode);
-        has_keyboard_key = true;
-      }
-      else
-      {
-        // send empty key report if previously has key pressed
-        if (has_keyboard_key)
-          tud_hid_n_keyboard_report(ITF_NUM_KEYBOARD, report_id, modifier, NULL);
-        has_keyboard_key = false;
-      }
+    if (delta_x != 0) {
+      // Apply unified acceleration multiplier
+      accel_x = (int16_t)(delta_x * accel_counter);
+      // Clamp to int8_t range
+      if (accel_x > 127) accel_x = 127;
+      if (accel_x < -128) accel_x = -128;
     }
 
-    // mouse interface
+    if (delta_y != 0) {
+      // Apply unified acceleration multiplier
+      accel_y = (int16_t)(delta_y * accel_counter);
+      // Clamp to int8_t range
+      if (accel_y > 127) accel_y = 127;
+      if (accel_y < -128) accel_y = -128;
+    }
+
+    // Handle acceleration decay when no movement
+    if (delta_x == 0 && delta_y == 0) {
+      accel_counter = accel_counter * ACCEL_DECAY_RATE;
+      if (accel_counter < 1.0f) accel_counter = 1.0f;
+    }
+
+    // mouse interface - send reports with accelerated movement data
     if (tud_hid_n_ready(ITF_NUM_MOUSE))
     {
       uint8_t const report_id = 0;
-      tud_hid_n_mouse_report(ITF_NUM_MOUSE, report_id, button_mask, delta_x, delta_y, vertical, horizontal);
+      tud_hid_n_mouse_report(ITF_NUM_MOUSE, report_id, 0, (int8_t)accel_x, (int8_t)accel_y, 0, 0);
 
-      button_mask = delta_x = delta_y = vertical = horizontal = 0;
+      // Reset deltas after sending
+      delta_x = 0;
+      delta_y = 0;
     }
   }
 }
@@ -210,7 +213,7 @@ void tud_hid_set_protocol_cb(uint8_t instance, uint8_t protocol)
 // Invoked when sent REPORT successfully to host
 // Application can use this to send the next report
 // Note: For composite reports, report[0] is report ID
-void tud_hid_report_complete_cb(uint8_t instance, uint8_t const *report, uint8_t len)
+void tud_hid_report_complete_cb(uint8_t instance, uint8_t const *report, uint16_t len)
 {
   (void)instance;
   (void)report;
@@ -239,45 +242,78 @@ uint16_t tud_hid_get_report_cb(uint8_t instance, uint8_t report_id, hid_report_t
 void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id, hid_report_type_t report_type, uint8_t const *buffer, uint16_t bufsize)
 {
   (void)report_id;
-
-  // keyboard interface
-  if (instance == ITF_NUM_KEYBOARD)
-  {
-    // Set keyboard LED e.g Capslock, Numlock etc...
-    if (report_type == HID_REPORT_TYPE_OUTPUT)
-    {
-      // bufsize should be (at least) 1
-      if (bufsize < 1)
-        return;
-
-      uint8_t const kbd_leds = buffer[0];
-
-      if (kbd_leds & KEYBOARD_LED_CAPSLOCK)
-      {
-        // Capslock On: disable blink, turn led on
-      }
-      else
-      {
-        // Caplocks Off: back to normal blink
-      }
-    }
-  }
 }
 
+// Interrupt callback for quadrature encoder
 void irq_callback(uint gpio, uint32_t events)
 {
-  if (gpio == 10) {
-    if (events & GPIO_IRQ_EDGE_RISE) {
-      if (gpio_get(18))
-        vertical++;
-      else
-        vertical--;
-    }
-    else if (events & GPIO_IRQ_EDGE_FALL){
-      if (gpio_get(18))
-        vertical--;
-      else
-        vertical++;
+  uint32_t now = time_us_32();
+
+  if (gpio == X1 || gpio == X2) {
+    // Software debouncing for X axis
+    if (now - last_x_interrupt < DEBOUNCE_US) return;
+    last_x_interrupt = now;
+
+    // Read current X state
+    uint8_t x1 = gpio_get(X1);
+    uint8_t x2 = gpio_get(X2);
+    uint8_t current_x_state = (x1 << 1) | x2;
+
+    // Improved quadrature decoding for X axis
+    if (current_x_state != prev_x_state) {
+      // Gray code transitions: 00->01->11->10->00 (clockwise = left)
+      //                      00->10->11->01->00 (counter-clockwise = right)
+      if ((prev_x_state == 0 && current_x_state == 1) ||
+          (prev_x_state == 1 && current_x_state == 3) ||
+          (prev_x_state == 3 && current_x_state == 2) ||
+          (prev_x_state == 2 && current_x_state == 0)) {
+        delta_x -= 1;  // Left (swapped)
+        last_x_direction = -1;
+      }
+      else if ((prev_x_state == 0 && current_x_state == 2) ||
+               (prev_x_state == 2 && current_x_state == 3) ||
+               (prev_x_state == 3 && current_x_state == 1) ||
+               (prev_x_state == 1 && current_x_state == 0)) {
+        delta_x += 1;  // Right (swapped)
+        last_x_direction = 1;
+      }
+      prev_x_state = current_x_state;
     }
   }
+  else if (gpio == Y1 || gpio == Y2) {
+    // Software debouncing for Y axis
+    if (now - last_y_interrupt < DEBOUNCE_US) return;
+    last_y_interrupt = now;
+
+    // Read current Y state
+    uint8_t y1 = gpio_get(Y1);
+    uint8_t y2 = gpio_get(Y2);
+    uint8_t current_y_state = (y1 << 1) | y2;
+
+    // Improved quadrature decoding for Y axis
+    if (current_y_state != prev_y_state) {
+      if ((prev_y_state == 0 && current_y_state == 1) ||
+          (prev_y_state == 1 && current_y_state == 3) ||
+          (prev_y_state == 3 && current_y_state == 2) ||
+          (prev_y_state == 2 && current_y_state == 0)) {
+        delta_y += 1;  // Down
+        last_y_direction = 1;
+      }
+      else if ((prev_y_state == 0 && current_y_state == 2) ||
+               (prev_y_state == 2 && current_y_state == 3) ||
+               (prev_y_state == 3 && current_y_state == 1) ||
+               (prev_y_state == 1 && current_y_state == 0)) {
+        delta_y -= 1;  // Up
+        last_y_direction = -1;
+      }
+      prev_y_state = current_y_state;
+    }
+  }
+
+  // Handle acceleration for any movement
+  if (delta_x != 0 || delta_y != 0) {
+    // Increase acceleration for any movement
+    accel_counter = (accel_counter < MAX_ACCEL_COUNTER) ? accel_counter + ACCEL_INCREMENT : MAX_ACCEL_COUNTER;
+  }
+  // Note: Decay logic moved to hid_task() to work when mouse is stopped
 }
