@@ -66,8 +66,8 @@ static int8_t last_diagonal_direction = 0;  // 0=none, 1=up-right, 2=up-left, 3=
 static float accel_counter = 1.0f;  // Single acceleration counter for all movement
 static float x_accel_counter = 1.0f;  // Start at 1.0 for base speed
 static float y_accel_counter = 1.0f;  // Start at 1.0 for base speed
-const float MAX_ACCEL_COUNTER = 80.0f;   // Maximum acceleration level
-const float ACCEL_INCREMENT = 0.1f;    // How much to increase per movement
+const float MAX_ACCEL_COUNTER = 20.0f;   // Maximum acceleration level
+const float ACCEL_INCREMENT = 0.0125f;    // How much to increase per movement
 const float ACCEL_DECAY_RATE = 0.95f;   // Decay factor when no movement
 
 void hid_task(void);
@@ -160,24 +160,24 @@ void hid_task(void)
   {
     start_ms += interval_ms;
 
-    // Apply acceleration to movement deltas
-    int16_t accel_x = delta_x;
-    int16_t accel_y = delta_y;
+    // Apply acceleration to scroll deltas (use smaller values for scroll)
+    int8_t scroll_x = 0;
+    int8_t scroll_y = 0;
 
     if (delta_x != 0) {
-      // Apply unified acceleration multiplier
-      accel_x = (int16_t)(delta_x * accel_counter);
-      // Clamp to int8_t range
-      if (accel_x > 127) accel_x = 127;
-      if (accel_x < -128) accel_x = -128;
+      // Apply acceleration multiplier for horizontal scroll
+      scroll_x = (int8_t)(delta_x * accel_counter);
+      // Clamp to smaller range for scroll (typical scroll values are smaller)
+      if (scroll_x > 10) scroll_x = 10;
+      if (scroll_x < -10) scroll_x = -10;
     }
 
     if (delta_y != 0) {
-      // Apply unified acceleration multiplier
-      accel_y = (int16_t)(delta_y * accel_counter);
-      // Clamp to int8_t range
-      if (accel_y > 127) accel_y = 127;
-      if (accel_y < -128) accel_y = -128;
+      // Apply acceleration multiplier for vertical scroll
+      scroll_y = (int8_t)(delta_y * accel_counter);
+      // Clamp to smaller range for scroll
+      if (scroll_y > 10) scroll_y = 10;
+      if (scroll_y < -10) scroll_y = -10;
     }
 
     // Handle acceleration decay when no movement
@@ -186,11 +186,12 @@ void hid_task(void)
       if (accel_counter < 1.0f) accel_counter = 1.0f;
     }
 
-    // mouse interface - send reports with accelerated movement data
+    // mouse interface - send reports with accelerated scroll data
     if (tud_hid_n_ready(ITF_NUM_MOUSE))
     {
       uint8_t const report_id = 0;
-      tud_hid_n_mouse_report(ITF_NUM_MOUSE, report_id, 0, (int8_t)accel_x, (int8_t)accel_y, 0, 0);
+      // Use scroll_x for vertical scroll (wheel), scroll_y for horizontal scroll (pan)
+      tud_hid_n_mouse_report(ITF_NUM_MOUSE, report_id, 0, 0, 0, -scroll_y, scroll_x);
 
       // Reset deltas after sending
       delta_x = 0;
