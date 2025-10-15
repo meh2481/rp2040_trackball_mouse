@@ -34,14 +34,14 @@
 
 #include "pico/stdlib.h"
 
-#define LEFT_BTN   6
-#define RIGHT_BTN  7
-#define MIDDLE_BTN 8
+#define LEFT_BTN   2
+#define RIGHT_BTN  16
+#define MIDDLE_BTN 28
 
-#define X1 10
-#define X2 11
-#define Y1 12
-#define Y2 13
+#define X1 1
+#define X2 0
+#define Y1 18
+#define Y2 17
 
 //--------------------------------------------------------------------+
 // MACRO CONSTANT TYPEDEF PROTYPES
