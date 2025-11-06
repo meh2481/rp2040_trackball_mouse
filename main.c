@@ -194,15 +194,23 @@ void hid_task(void)
 
     // Handle volume control with left and right buttons
     uint16_t consumer_key = 0;
+    bool button_pressed = false;
     
     // Detect button press (transition from high to low, since active low)
     if (!left_btn && prev_left_btn) {
       // Left button pressed - volume down
       consumer_key = HID_USAGE_CONSUMER_VOLUME_DECREMENT;
+      button_pressed = true;
     }
     else if (!right_btn && prev_right_btn) {
       // Right button pressed - volume up
       consumer_key = HID_USAGE_CONSUMER_VOLUME_INCREMENT;
+      button_pressed = true;
+    }
+    // Detect button release (both buttons are now high/not pressed)
+    else if (left_btn && right_btn && volume_key_sent) {
+      consumer_key = 0;
+      button_pressed = false;
     }
 
     prev_left_btn = left_btn;
@@ -211,12 +219,12 @@ void hid_task(void)
     // Send consumer control report when key is pressed or released
     if (tud_hid_n_ready(ITF_NUM_CONSUMER))
     {
-      if (consumer_key != 0) {
+      if (button_pressed) {
         // Send key press
         tud_hid_n_report(ITF_NUM_CONSUMER, 0, &consumer_key, sizeof(consumer_key));
         volume_key_sent = true;
       }
-      else if (volume_key_sent) {
+      else if (!button_pressed && volume_key_sent) {
         // Send key release by sending zero-value consumer_key
         tud_hid_n_report(ITF_NUM_CONSUMER, 0, &consumer_key, sizeof(consumer_key));
         volume_key_sent = false;
