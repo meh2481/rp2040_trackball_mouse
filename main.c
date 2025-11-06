@@ -185,8 +185,8 @@ void hid_task(void)
     start_ms += interval_ms;
 
     // Read button states (active low due to pull-ups)
-    static bool prev_left_btn = true;
-    static bool prev_right_btn = true;
+    static bool prev_left_btn = true;   // true = gpio high = button not pressed
+    static bool prev_right_btn = true;  // true = gpio high = button not pressed
     static bool volume_key_sent = false;
     bool left_btn = gpio_get(LEFT_BTN);
     bool right_btn = gpio_get(RIGHT_BTN);
