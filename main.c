@@ -34,6 +34,14 @@
 
 #include "pico/stdlib.h"
 
+// HID Consumer Control usage codes (from USB HID Usage Tables spec)
+#ifndef HID_USAGE_CONSUMER_VOLUME_INCREMENT
+#define HID_USAGE_CONSUMER_VOLUME_INCREMENT  0x00E9
+#endif
+#ifndef HID_USAGE_CONSUMER_VOLUME_DECREMENT
+#define HID_USAGE_CONSUMER_VOLUME_DECREMENT  0x00EA
+#endif
+
 #define LEFT_BTN   2
 #define RIGHT_BTN  16
 #define MIDDLE_BTN 28
@@ -209,7 +217,7 @@ void hid_task(void)
         volume_key_sent = true;
       }
       else if (volume_key_sent) {
-        // Send key release (0 = no key pressed)
+        // Send key release by sending zero-value consumer_key
         tud_hid_n_report(ITF_NUM_CONSUMER, 0, &consumer_key, sizeof(consumer_key));
         volume_key_sent = false;
       }
