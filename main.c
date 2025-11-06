@@ -179,6 +179,7 @@ void hid_task(void)
     // Read button states (active low due to pull-ups)
     static bool prev_left_btn = true;
     static bool prev_right_btn = true;
+    static uint16_t prev_consumer_key = 0;
     bool left_btn = gpio_get(LEFT_BTN);
     bool right_btn = gpio_get(RIGHT_BTN);
     bool middle_btn = !gpio_get(MIDDLE_BTN);  // Still use middle button as mouse button
@@ -199,10 +200,11 @@ void hid_task(void)
     prev_left_btn = left_btn;
     prev_right_btn = right_btn;
 
-    // Send consumer control report
-    if (tud_hid_n_ready(ITF_NUM_CONSUMER))
+    // Send consumer control report only when there's a change
+    if (consumer_key != prev_consumer_key && tud_hid_n_ready(ITF_NUM_CONSUMER))
     {
       tud_hid_n_report(ITF_NUM_CONSUMER, 0, &consumer_key, sizeof(consumer_key));
+      prev_consumer_key = consumer_key;
     }
 
     // Apply acceleration to scroll deltas (use smaller values for scroll)
