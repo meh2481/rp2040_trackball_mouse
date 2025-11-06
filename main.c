@@ -177,10 +177,33 @@ void hid_task(void)
     start_ms += interval_ms;
 
     // Read button states (active low due to pull-ups)
-    uint8_t buttons = 0;
-    if (!gpio_get(LEFT_BTN)) buttons |= (1 << 0);   // Left button
-    if (!gpio_get(RIGHT_BTN)) buttons |= (1 << 1);  // Right button
-    if (!gpio_get(MIDDLE_BTN)) buttons |= (1 << 2); // Middle button
+    static bool prev_left_btn = true;
+    static bool prev_right_btn = true;
+    bool left_btn = gpio_get(LEFT_BTN);
+    bool right_btn = gpio_get(RIGHT_BTN);
+    bool middle_btn = !gpio_get(MIDDLE_BTN);  // Still use middle button as mouse button
+
+    // Handle volume control with left and right buttons
+    uint16_t consumer_key = 0;
+    
+    // Detect button press (transition from high to low, since active low)
+    if (!left_btn && prev_left_btn) {
+      // Left button pressed - volume down
+      consumer_key = HID_USAGE_CONSUMER_VOLUME_DECREMENT;
+    }
+    else if (!right_btn && prev_right_btn) {
+      // Right button pressed - volume up
+      consumer_key = HID_USAGE_CONSUMER_VOLUME_INCREMENT;
+    }
+
+    prev_left_btn = left_btn;
+    prev_right_btn = right_btn;
+
+    // Send consumer control report
+    if (tud_hid_n_ready(ITF_NUM_CONSUMER))
+    {
+      tud_hid_n_report(ITF_NUM_CONSUMER, 0, &consumer_key, sizeof(consumer_key));
+    }
 
     // Apply acceleration to scroll deltas (use smaller values for scroll)
     int8_t scroll_x = 0;
@@ -212,6 +235,8 @@ void hid_task(void)
     if (tud_hid_n_ready(ITF_NUM_MOUSE))
     {
       uint8_t const report_id = 0;
+      uint8_t buttons = 0;
+      if (middle_btn) buttons |= (1 << 2); // Middle button
       // Use scroll_x for vertical scroll (wheel), scroll_y for horizontal scroll (pan)
       tud_hid_n_mouse_report(ITF_NUM_MOUSE, report_id, buttons, 0, 0, -scroll_y, scroll_x);
 
