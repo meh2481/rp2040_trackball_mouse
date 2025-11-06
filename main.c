@@ -34,6 +34,14 @@
 
 #include "pico/stdlib.h"
 
+// HID Consumer Control usage codes (from USB HID Usage Tables spec)
+#ifndef HID_USAGE_CONSUMER_VOLUME_INCREMENT
+#define HID_USAGE_CONSUMER_VOLUME_INCREMENT  0x00E9
+#endif
+#ifndef HID_USAGE_CONSUMER_VOLUME_DECREMENT
+#define HID_USAGE_CONSUMER_VOLUME_DECREMENT  0x00EA
+#endif
+
 #define LEFT_BTN   2
 #define RIGHT_BTN  16
 #define MIDDLE_BTN 28
@@ -177,10 +185,51 @@ void hid_task(void)
     start_ms += interval_ms;
 
     // Read button states (active low due to pull-ups)
-    uint8_t buttons = 0;
-    if (!gpio_get(LEFT_BTN)) buttons |= (1 << 0);   // Left button
-    if (!gpio_get(RIGHT_BTN)) buttons |= (1 << 1);  // Right button
-    if (!gpio_get(MIDDLE_BTN)) buttons |= (1 << 2); // Middle button
+    static bool prev_left_btn = true;   // true = gpio high = button not pressed
+    static bool prev_right_btn = true;  // true = gpio high = button not pressed
+    static bool volume_key_sent = false;
+    bool left_btn = gpio_get(LEFT_BTN);
+    bool right_btn = gpio_get(RIGHT_BTN);
+    bool middle_btn = !gpio_get(MIDDLE_BTN);  // Still use middle button as mouse button
+
+    // Handle volume control with left and right buttons
+    uint16_t consumer_key = 0;
+    bool button_pressed = false;
+    
+    // Detect button press (transition from high to low, since active low)
+    if (!left_btn && prev_left_btn) {
+      // Left button pressed - volume down
+      consumer_key = HID_USAGE_CONSUMER_VOLUME_DECREMENT;
+      button_pressed = true;
+    }
+    else if (!right_btn && prev_right_btn) {
+      // Right button pressed - volume up
+      consumer_key = HID_USAGE_CONSUMER_VOLUME_INCREMENT;
+      button_pressed = true;
+    }
+    // Detect button release (both buttons are now high/not pressed)
+    else if (left_btn && right_btn && volume_key_sent) {
+      consumer_key = 0;
+      button_pressed = false;
+    }
+
+    prev_left_btn = left_btn;
+    prev_right_btn = right_btn;
+
+    // Send consumer control report when key is pressed or released
+    if (tud_hid_n_ready(ITF_NUM_CONSUMER))
+    {
+      if (button_pressed) {
+        // Send key press
+        tud_hid_n_report(ITF_NUM_CONSUMER, 0, &consumer_key, sizeof(consumer_key));
+        volume_key_sent = true;
+      }
+      else if (!button_pressed && volume_key_sent) {
+        // Send key release by sending zero-value consumer_key
+        tud_hid_n_report(ITF_NUM_CONSUMER, 0, &consumer_key, sizeof(consumer_key));
+        volume_key_sent = false;
+      }
+    }
 
     // Apply acceleration to scroll deltas (use smaller values for scroll)
     int8_t scroll_x = 0;
@@ -212,6 +261,8 @@ void hid_task(void)
     if (tud_hid_n_ready(ITF_NUM_MOUSE))
     {
       uint8_t const report_id = 0;
+      uint8_t buttons = 0;
+      if (middle_btn) buttons |= (1 << 2); // Middle button
       // Use scroll_x for vertical scroll (wheel), scroll_y for horizontal scroll (pan)
       tud_hid_n_mouse_report(ITF_NUM_MOUSE, report_id, buttons, 0, 0, -scroll_y, scroll_x);
 

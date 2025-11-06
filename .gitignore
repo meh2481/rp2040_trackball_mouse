@@ -31,8 +31,4 @@
 *.out
 *.app
 
-<<<<<<< Updated upstream
 build/
-=======
-build/
->>>>>>> Stashed changes

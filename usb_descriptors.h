@@ -28,6 +28,7 @@
 enum
 {
   ITF_NUM_MOUSE,
+  ITF_NUM_CONSUMER,
   ITF_NUM_TOTAL
 };
 
